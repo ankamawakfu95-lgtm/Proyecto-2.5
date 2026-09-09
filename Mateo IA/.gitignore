@@ -11,6 +11,8 @@ __pycache__/
 # Datos generados localmente
 backend/backups/
 backend/data/vectors/
+backend/data/conversations/
+backend/data/voices/
 backend/data/generated/
 backend/data/audio/
 backend/logs/

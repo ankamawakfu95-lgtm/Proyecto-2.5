@@ -35,7 +35,7 @@
 - ✅ Cálculos matemáticos seguros
 - ✅ Carga de archivos (PDF, Word, Excel, CSV, texto) como contexto de memoria
 - ✅ Generación de archivos (PDF, Word, Excel, Markdown) desde el chat o por API
-- ✅ Voz: transcripción (STT) y síntesis (TTS) 100% locales — **opcional**, requiere instalar `requirements-voice.txt`
+- ✅ Voz: transcripción (STT) y síntesis (TTS) 100% locales — el instalador incluye `requirements-voice.txt`
 - ✅ Autenticación opcional por API key para los endpoints que modifican estado
 - ⚠️ Clima, noticias y traducción: parcialmente implementados o pendientes de proveedor
 
@@ -63,12 +63,12 @@ Formatos soportados: `docx`, `pdf`, `xlsx`, `md`, `txt`.
 
 ---
 
-## 🎙️ Voz (opcional, 100% local)
+## 🎙️ Voz (100% local)
 
 Instalación:
 
 ```bash
-pip install -r requirements-voice.txt
+pip install -r requirements.txt
 ```
 
 Configurá en `.env`:
@@ -78,7 +78,9 @@ MATEO_WHISPER_MODEL=base
 MATEO_PIPER_VOICE_MODEL=C:\ruta\a\tu\voz\es_ES-modelo.onnx
 ```
 
-- Descargá un modelo de voz de Piper desde https://github.com/rhasspy/piper/blob/master/VOICES.md
+- El instalador descarga y configura automáticamente una voz española Piper de aproximadamente 60 MB.
+- Si usás el instalador, no necesitas descargar manualmente el modelo ni editar `MATEO_PIPER_VOICE_MODEL`.
+- También puedes descargar otra voz desde https://github.com/rhasspy/piper/blob/master/VOICES.md y cambiar `MATEO_PIPER_VOICE_MODEL` en `.env`.
 - faster-whisper descarga su modelo automáticamente la primera vez que se usa
 
 Podés comprobar si están disponibles con `GET /voice-status`. En la UI, el botón 🎤 graba y transcribe tu mensaje, y el botón 🔊 junto a cada respuesta de Mateo la lee en voz alta.
@@ -310,7 +312,13 @@ PYTHONPATH=. python -m unittest discover -s tests -v
 python -m compileall -q .
 ```
 
-Las pruebas cubren el aislamiento del historial por usuario y casos críticos de clasificación de intenciones.
+Las pruebas cubren el aislamiento del historial por usuario, la persistencia selectiva de conversaciones y casos críticos de clasificación de intenciones.
+
+### Memoria persistente de conversaciones
+
+Mateo guarda localmente las conversaciones del usuario en `backend/data/conversations/memory.json`. Al iniciar de nuevo, no carga todo el historial en cada respuesta: busca únicamente coincidencias relevantes con la consulta actual. Por eso un saludo normal no debería provocar referencias a conversaciones antiguas.
+
+La memoria se separa por `user_id` y `/clear` borra también la memoria persistente de ese usuario. Para cambiar la ubicación del archivo, configura `MATEO_CONVERSATION_MEMORY_PATH` en `.env`.
 
 ### Añadir Nuevas Funcionalidades
 

@@ -30,6 +30,14 @@ else:
     _VECTOR_IMPORT_ERROR = None
 
 try:
+    from neural.conversation_memory import ConversationMemory
+except Exception as conversation_memory_import_error:
+    ConversationMemory = None
+    _CONVERSATION_MEMORY_IMPORT_ERROR = conversation_memory_import_error
+else:
+    _CONVERSATION_MEMORY_IMPORT_ERROR = None
+
+try:
     from tools.external_apis import ExternalAPIManager
 except Exception as api_import_error:
     ExternalAPIManager = None
@@ -460,6 +468,14 @@ class MateoUltraCore:
                 logger.info("✅ VectorStore local inicializado.")
             except Exception as e:
                 logger.warning(f"⚠️ VectorStore local no disponible: {e}")
+
+        self.conversation_memory = None
+        if ConversationMemory and _CONVERSATION_MEMORY_IMPORT_ERROR is None:
+            try:
+                self.conversation_memory = ConversationMemory(config)
+                logger.info("✅ Memoria persistente de conversaciones inicializada.")
+            except Exception as e:
+                logger.warning(f"⚠️ Memoria persistente no disponible: {e}")
         
         # 3. APIs Externas
         self.api_manager = None
@@ -585,10 +601,20 @@ class MateoUltraCore:
                     logger.info("🚫 El usuario pidió ignorar la bóveda de Obsidian para esta respuesta.")
                 else:
                     rag_context = await self._retrieve_obsidian_context(message)
+                conversation_context = self._retrieve_conversation_context(user_id, message)
+                if conversation_context:
+                    rag_context = "\n\n---\n\n".join(
+                        part for part in [rag_context, conversation_context] if part
+                    )
                 final_response = await self._generate_response(message, rag_context, tool_result)
 
             self.conversation_history.append({"role": "user", "content": message})
             self.conversation_history.append({"role": "assistant", "content": final_response})
+            if self.conversation_memory:
+                try:
+                    self.conversation_memory.add_turn(user_id, message, final_response)
+                except Exception as e:
+                    logger.warning(f"⚠️ No se pudo guardar la conversación: {e}")
 
             await self._maybe_summarize_history()
 
@@ -1223,12 +1249,30 @@ class MateoUltraCore:
             logger.warning(f"⚠️ Error buscando en la memoria de Obsidian: {e}")
         
         return ""
+
+    def _retrieve_conversation_context(self, user_id: str, query: str) -> str:
+        """Recupera recuerdos previos solo cuando comparten términos relevantes."""
+        if not self.conversation_memory:
+            return ""
+        try:
+            records = self.conversation_memory.search(user_id, query, limit=3)
+        except Exception as e:
+            logger.warning(f"⚠️ Error buscando en la memoria de conversaciones: {e}")
+            return ""
+        if not records:
+            return ""
+        return (
+            "[CONVERSACIONES PREVIAS RELEVANTES]\n"
+            + "\n\n---\n\n".join(records)
+            + "\n\nUsa estos recuerdos solo si responden directamente a la solicitud actual. "
+            "No los menciones ni los repitas si no vienen al caso."
+        )
     
     async def _generate_response(self, message: str, rag_context: str, tool_result: Any) -> str:
         user_prompt = message
         if rag_context:
             user_prompt = (
-                f"[CONTEXTO DE TU MEMORIA EN OBSIDIAN]:\n{rag_context}\n\n"
+                f"[CONTEXTO DE TU MEMORIA LOCAL]:\n{rag_context}\n\n"
                 f"[MENSAJE DEL USUARIO]:\n{message}\n\n"
                 "Usá el contexto solo si de verdad ayuda a responder; si no aporta nada, ignoralo "
                 "y respondé directamente al mensaje."
@@ -1267,6 +1311,11 @@ class MateoUltraCore:
             self.conversation_history.clear()
             self.conversation_summary = ""
             self._pending_self_feature.set(None)
+            if self.conversation_memory:
+                try:
+                    self.conversation_memory.clear_user(user_id)
+                except Exception as e:
+                    logger.warning(f"⚠️ No se pudo borrar la memoria persistente: {e}")
         finally:
             self._active_user_id.reset(token)
         logger.info("🧹 Historial de conversación reiniciado con éxito.")

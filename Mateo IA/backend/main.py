@@ -155,6 +155,8 @@ def get_default_config():
         # discontinúe (como pasó antes con un "gemini-1.5-flash" fijo).
         "gemini_model": os.getenv("MATEO_GEMINI_MODEL", "gemini-flash-latest"),
         "obsidian_vault": os.getenv("MATEO_OBSIDIAN_VAULT", os.getenv("OBSIDIAN_VAULT_PATH", "")),
+        "conversation_memory_path": os.getenv("MATEO_CONVERSATION_MEMORY_PATH", ""),
+        "conversation_memory_max_turns": int(os.getenv("MATEO_CONVERSATION_MEMORY_MAX_TURNS", 200)),
     }
 
 

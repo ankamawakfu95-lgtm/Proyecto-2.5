@@ -45,7 +45,7 @@ call venv\Scripts\activate.bat
 :: Instalar dependencias
 echo 📥 Instalando/Actualizando dependencias...
 echo    (Esto puede tomar unos minutos la primera vez...)
-pip install -q -r backend\requirements.txt
+pip install -q -r requirements.txt
 if errorlevel 1 (
     echo ❌ Error instalando dependencias
     pause

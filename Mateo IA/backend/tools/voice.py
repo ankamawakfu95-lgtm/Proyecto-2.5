@@ -1,8 +1,8 @@
 """Voz local: transcripción (STT) con faster-whisper y síntesis (TTS) con Piper.
 
-Ambas dependencias son OPCIONALES y pesadas, así que no van en requirements.txt
-por defecto (ver requirements-voice.txt). Si no están instaladas, las funciones
-devuelven un error claro en vez de romper el resto de Mateo.
+Las dependencias se instalan desde requirements-voice.txt. El instalador también
+descarga una voz española Piper y configura MATEO_PIPER_VOICE_MODEL; si falta
+cualquier componente, las funciones devuelven un error claro.
 """
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ def _get_piper_voice():
         except ImportError as e:
             raise VoiceError(
                 "Falta 'piper-tts'. Instalá con: pip install -r requirements-voice.txt "
-                "y descargá un modelo de voz (ver README, sección Voz)."
+                "y ejecutá el instalador para descargar la voz configurada."
             ) from e
         model_path = os.getenv("MATEO_PIPER_VOICE_MODEL")
         if not model_path or not Path(model_path).exists():
@@ -95,7 +95,8 @@ def voice_status() -> Dict[str, bool]:
         stt_available = False
     try:
         import piper  # noqa: F401
-        tts_available = bool(os.getenv("MATEO_PIPER_VOICE_MODEL"))
+        model_path = os.getenv("MATEO_PIPER_VOICE_MODEL", "").strip()
+        tts_available = bool(model_path and Path(model_path).is_file())
     except ImportError:
         tts_available = False
     return {"stt_available": stt_available, "tts_available": tts_available}
