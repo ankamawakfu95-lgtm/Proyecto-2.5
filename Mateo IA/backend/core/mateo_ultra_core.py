@@ -6,6 +6,7 @@ Cerebro de Obsidian, Modo Programador Avanzado y Motor de Auto-mejora.
 import re
 import random
 import logging
+from contextvars import ContextVar
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 
@@ -402,8 +403,13 @@ class MateoUltraCore:
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.user_id = "default"
-        self._pending_self_feature: Optional[str] = None
-        self.conversation_history: List[Dict[str, str]] = []
+        self._active_user_id: ContextVar[str] = ContextVar("mateo_active_user_id", default="default")
+        self._pending_self_feature: ContextVar[Optional[str]] = ContextVar(
+            "mateo_pending_self_feature", default=None
+        )
+        self._conversation_states: Dict[str, Dict[str, Any]] = {
+            "default": {"history": [], "summary": ""}
+        }
         self.max_history = int(config.get("max_history", 10))
         self.response_max_tokens = max(128, int(config.get("response_max_tokens", 2048) or 2048))
         self.response_default_tokens = max(128, int(config.get("response_default_tokens", 1200) or 1200))
@@ -520,6 +526,27 @@ class MateoUltraCore:
     # ==========================================
     # PROCESAMIENTO PRINCIPAL
     # ==========================================
+    def _conversation_state(self) -> Dict[str, Any]:
+        """Retorna el estado de conversación del usuario activo."""
+        user_id = self._active_user_id.get()
+        return self._conversation_states.setdefault(user_id, {"history": [], "summary": ""})
+
+    @property
+    def conversation_history(self) -> List[Dict[str, str]]:
+        return self._conversation_state()["history"]
+
+    @conversation_history.setter
+    def conversation_history(self, value: List[Dict[str, str]]) -> None:
+        self._conversation_state()["history"] = value
+
+    @property
+    def conversation_summary(self) -> str:
+        return self._conversation_state()["summary"]
+
+    @conversation_summary.setter
+    def conversation_summary(self, value: str) -> None:
+        self._conversation_state()["summary"] = value
+
     async def process_message(self, message: str, user_id: str = "default", use_tools: bool = True) -> Dict[str, Any]:
         if not isinstance(message, str) or not message.strip():
             raise ValueError("El mensaje no puede estar vacío.")
@@ -528,52 +555,55 @@ class MateoUltraCore:
         if not isinstance(user_id, str) or not user_id.strip():
             raise ValueError("El identificador de usuario no puede estar vacío.")
 
-        self.stats["total_messages"] += 1
-        self.user_id = user_id
-        start_time = datetime.now()
-        
-        rag_context = ""
-        query_type = self._classify_query(message)
-        logger.info(f"🔍 Intención detectada: {query_type}")
-        
-        final_response = ""
-        tool_result = None
-        
-        if use_tools and self._should_use_tools(message, query_type):
-            tool_result = await self._execute_tool(message, query_type)
-            if tool_result and "result" in tool_result:
-                final_response = tool_result["result"]
-                if query_type == "learn": 
-                    self.stats["learning_cycles"] += 1
-                if query_type == "programming": 
-                    self.stats["programming_tasks"] += 1
-                if query_type == "self_improve":
-                    self.stats["self_improvements"] += 1
-                if query_type == "agent_task":
-                    self.stats["agent_runs"] += 1
-        
-        if not final_response:
-            if self._wants_to_skip_memory(message):
-                logger.info("🚫 El usuario pidió ignorar la bóveda de Obsidian para esta respuesta.")
-            else:
-                rag_context = await self._retrieve_obsidian_context(message)
-            final_response = await self._generate_response(message, rag_context, tool_result)
-        
-        self.conversation_history.append({"role": "user", "content": message})
-        self.conversation_history.append({"role": "assistant", "content": final_response})
+        token = self._active_user_id.set(user_id.strip())
+        try:
+            self.stats["total_messages"] += 1
+            start_time = datetime.now()
 
-        await self._maybe_summarize_history()
+            rag_context = ""
+            query_type = self._classify_query(message)
+            logger.info(f"🔍 Intención detectada: {query_type}")
 
-        if len(self.conversation_history) > self.max_history * 2:
-            self.conversation_history = self.conversation_history[-(self.max_history * 2):]
-        
-        return {
-            "response": final_response,
-            "query_type": query_type,
-            "tool_used": tool_result["tool"] if tool_result else None,
-            "elapsed_time": (datetime.now() - start_time).total_seconds(),
-            "rag_context_used": bool(rag_context)
-        }
+            final_response = ""
+            tool_result = None
+
+            if use_tools and self._should_use_tools(message, query_type):
+                tool_result = await self._execute_tool(message, query_type)
+                if tool_result and "result" in tool_result:
+                    final_response = tool_result["result"]
+                    if query_type == "learn":
+                        self.stats["learning_cycles"] += 1
+                    if query_type == "programming":
+                        self.stats["programming_tasks"] += 1
+                    if query_type == "self_improve":
+                        self.stats["self_improvements"] += 1
+                    if query_type == "agent_task":
+                        self.stats["agent_runs"] += 1
+
+            if not final_response:
+                if self._wants_to_skip_memory(message):
+                    logger.info("🚫 El usuario pidió ignorar la bóveda de Obsidian para esta respuesta.")
+                else:
+                    rag_context = await self._retrieve_obsidian_context(message)
+                final_response = await self._generate_response(message, rag_context, tool_result)
+
+            self.conversation_history.append({"role": "user", "content": message})
+            self.conversation_history.append({"role": "assistant", "content": final_response})
+
+            await self._maybe_summarize_history()
+
+            if len(self.conversation_history) > self.max_history * 2:
+                self.conversation_history = self.conversation_history[-(self.max_history * 2):]
+
+            return {
+                "response": final_response,
+                "query_type": query_type,
+                "tool_used": tool_result["tool"] if tool_result else None,
+                "elapsed_time": (datetime.now() - start_time).total_seconds(),
+                "rag_context_used": bool(rag_context)
+            }
+        finally:
+            self._active_user_id.reset(token)
     
     # ==========================================
     # CLASIFICACIÓN Y HERRAMIENTAS
@@ -614,7 +644,7 @@ class MateoUltraCore:
         is_descriptive_question = any(re.search(p, msg_lower) for p in descriptive_patterns)
         self_feature = _match_self_feature(msg_lower)
         if self_feature and (is_descriptive_question or "?" in message):
-            self._pending_self_feature = self_feature
+            self._pending_self_feature.set(self_feature)
             return "self_feature"
 
         # 🚀 Auto-mejora: SOLO por comando explícito, nunca por lenguaje natural suelto.
@@ -811,7 +841,7 @@ class MateoUltraCore:
             # 🪪 PREGUNTA SOBRE UNA FUNCIÓN INTERNA DE MATEO — responde con el
             # hecho verificado de SELF_FEATURES, no con Modo Programador.
             if query_type == "self_feature":
-                feature_key = getattr(self, "_pending_self_feature", None) or _match_self_feature(message.lower())
+                feature_key = self._pending_self_feature.get() or _match_self_feature(message.lower())
                 fact = SELF_FEATURES.get(feature_key, {}).get("description") if feature_key else None
                 if not fact:
                     return None  # cae a charla normal si por algo no se pudo identificar la función
@@ -1230,10 +1260,15 @@ class MateoUltraCore:
     # ==========================================
     # GESTIÓN DE HISTORIAL Y ESTADÍSTICAS
     # ==========================================
-    def clear_history(self):
-        """Limpia el historial de la conversación activa (y su resumen acumulado)."""
-        self.conversation_history.clear()
-        self.conversation_summary = ""
+    def clear_history(self, user_id: str = "default"):
+        """Limpia el historial de un usuario sin afectar a los demás."""
+        token = self._active_user_id.set(user_id.strip() or "default")
+        try:
+            self.conversation_history.clear()
+            self.conversation_summary = ""
+            self._pending_self_feature.set(None)
+        finally:
+            self._active_user_id.reset(token)
         logger.info("🧹 Historial de conversación reiniciado con éxito.")
 
     def get_stats(self) -> Dict[str, Any]:

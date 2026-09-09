@@ -274,12 +274,15 @@ async def agent_run(request: AgentRunRequest, _: None = Depends(require_api_key)
 
 
 @app.post("/clear")
-async def clear_history(_: None = Depends(require_api_key)):
-    """Limpia el historial de conversación."""
+async def clear_history(user_id: str = "default", _: None = Depends(require_api_key)):
+    """Limpia el historial de conversación del usuario indicado."""
     if not mateo or not mateo.core:
         raise HTTPException(status_code=503, detail="Mateo no está disponible")
-    
-    mateo.core.clear_history()
+
+    if not user_id.strip() or len(user_id) > 100:
+        raise HTTPException(status_code=422, detail="user_id inválido")
+
+    mateo.core.clear_history(user_id)
     
     return {
         "success": True,
@@ -379,7 +382,7 @@ async def generate_file(
 
 
 @app.get("/files/{filename}")
-async def download_file(filename: str):
+async def download_file(filename: str, _: None = Depends(require_api_key)):
     """Descarga un archivo generado (documento o audio). Solo sirve nombres de
     archivo simples (sin rutas) desde las carpetas controladas por Mateo."""
     if "/" in filename or "\\" in filename or ".." in filename:
@@ -453,6 +456,12 @@ manager = ConnectionManager()
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket para chat en tiempo real."""
+    expected_api_key = os.getenv("MATEO_API_KEY", "").strip()
+    provided_api_key = websocket.headers.get("x-api-key") or websocket.query_params.get("api_key")
+    if expected_api_key and provided_api_key != expected_api_key:
+        await websocket.close(code=1008, reason="X-API-Key inválida o faltante")
+        return
+
     await manager.connect(websocket)
     
     try:

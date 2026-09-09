@@ -301,6 +301,17 @@ Depende casi enteramente del modelo elegido en Ollama y del hardware disponible;
 **Frontend:**
 - HTML/CSS/JS plano, sin frameworks ni build, servido directamente por FastAPI
 
+### Verificar el backend
+
+Desde la carpeta `backend`, ejecuta las pruebas de regresión y la comprobación de sintaxis:
+
+```bash
+PYTHONPATH=. python -m unittest discover -s tests -v
+python -m compileall -q .
+```
+
+Las pruebas cubren el aislamiento del historial por usuario y casos críticos de clasificación de intenciones.
+
 ### Añadir Nuevas Funcionalidades
 
 1. **Nueva herramienta externa:**
