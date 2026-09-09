@@ -1,0 +1,27 @@
+# Secretos y configuración local
+.env
+*.env
+
+# Entornos y cachés
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+
+# Datos generados localmente
+backend/backups/
+backend/data/vectors/
+backend/data/generated/
+backend/data/audio/
+backend/logs/
+backend/obsidian/
+
+# Biblioteca local (no distribuir documentos ni material con copyright)
+backend/libros/
+
+# Frontend y archivos del sistema
+node_modules/
+dist/
+build/
+.DS_Store
+Thumbs.db

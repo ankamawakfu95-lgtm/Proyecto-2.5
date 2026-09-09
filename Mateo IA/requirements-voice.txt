@@ -1,0 +1,13 @@
+# Dependencias OPCIONALES de voz (STT + TTS), 100% local, sin API key.
+# Instalar solo si vas a usar /transcribe y /speak:
+#   pip install -r requirements-voice.txt
+#
+# Además necesitás:
+# 1) Un modelo de voz de Piper (.onnx) descargado, y apuntar
+#    MATEO_PIPER_VOICE_MODEL en tu .env a esa ruta.
+#    Modelos: https://github.com/rhasspy/piper/blob/master/VOICES.md
+# 2) faster-whisper descarga su modelo automáticamente la primera vez
+#    (configurable con MATEO_WHISPER_MODEL, por defecto "base").
+
+faster-whisper
+piper-tts

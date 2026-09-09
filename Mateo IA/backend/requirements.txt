@@ -1,0 +1,14 @@
+# Framework Web y Utilidades
+fastapi
+uvicorn[standard]
+python-dotenv
+pydantic
+httpx
+ddgs
+python-multipart
+
+# Carga y generación de archivos (PDF, Word, Excel, Markdown)
+pypdf
+python-docx
+openpyxl
+fpdf2
