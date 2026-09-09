@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 try:
     import httpx
@@ -21,6 +22,40 @@ except ImportError:  # pragma: no cover - depende del entorno
     httpx = None
 
 TAVILY_SEARCH_URL = "https://api.tavily.com/search"
+
+_TRUSTED_DOMAIN_SUFFIXES = (
+    ".gov", ".gob", ".edu", ".ac.uk", ".who.int", ".int",
+)
+_TRUSTED_DOMAINS = {
+    "wikipedia.org", "nature.com", "science.org", "sciencedirect.com",
+    "arxiv.org", "ncbi.nlm.nih.gov", "nih.gov", "cochranelibrary.com",
+    "openstax.org", "python.org", "docs.python.org",
+}
+
+
+def source_quality(url: str) -> float:
+    """Devuelve una puntuación heurística, no una garantía de veracidad."""
+    parsed = urlparse(str(url))
+    host = parsed.netloc.lower().split(":", 1)[0]
+    host = host.removeprefix("www.")
+    if not host or parsed.scheme not in {"http", "https"}:
+        return 0.0
+    if host in _TRUSTED_DOMAINS or any(host.endswith(suffix.strip()) for suffix in _TRUSTED_DOMAIN_SUFFIXES):
+        return 1.0
+    if host.endswith(".org"):
+        return 0.65
+    return 0.45
+
+
+def _normalize_result(result: Dict[str, Any]) -> Dict[str, Any]:
+    url = str(result.get("url") or result.get("href") or "").strip()
+    return {
+        "title": str(result.get("title", "")).strip(),
+        "url": url,
+        "content": str(result.get("content") or result.get("body") or "").strip(),
+        "score": result.get("score"),
+        "source_quality": source_quality(url),
+    }
 
 
 def _tavily_request(
@@ -66,10 +101,11 @@ def _search_duckduckgo(query: str, num_results: int) -> List[Dict[str, str]]:
             from duckduckgo_search import DDGS  # compatibilidad con instalaciones viejas
         with DDGS() as search:
             rows = search.text(str(query), max_results=max(1, int(num_results)))
-            return [
-                {"title": str(r.get("title", "")), "url": str(r.get("href", "")), "content": str(r.get("body", ""))}
+            results = [
+                _normalize_result(r)
                 for r in rows
             ]
+            return sorted(results, key=lambda item: item["source_quality"], reverse=True)
     except Exception as e:
         # Antes esto se tragaba el error en silencio y Mateo decía "no
         # encontré nada" incluso cuando el problema era, por ejemplo, un
@@ -96,10 +132,8 @@ def search_internet(query: str, num_results: int = 5, **kwargs: Any) -> List[Dic
 
     data = _tavily_request(query, num_results, api_key, search_depth=search_depth)
     if data and data.get("results"):
-        return [
-            {"title": str(r.get("title", "")), "url": str(r.get("url", "")), "content": str(r.get("content", ""))}
-            for r in data["results"]
-        ]
+        results = [_normalize_result(r) for r in data["results"]]
+        return sorted(results, key=lambda item: item["source_quality"], reverse=True)
 
     return _search_duckduckgo(query, num_results)
 

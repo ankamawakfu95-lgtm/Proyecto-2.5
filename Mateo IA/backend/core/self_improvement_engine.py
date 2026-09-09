@@ -46,6 +46,9 @@ class SelfImprovementEngine:
     """
 
     # CORRECCIÓN 1: Constructor correcto con doble guion bajo
+    ANALYSIS_CHUNK_CHARS = 24000
+    MAX_PROPOSALS = 3
+
     def __init__(self, language_model):
         self.language_model = language_model
         self.improvement_history = []
@@ -99,14 +102,14 @@ class SelfImprovementEngine:
     def _gather_code_for_area(self, area: str) -> Dict[str, str]:
         code_map = {}
         if area in ["all", "prompts"]:
-            code_map["mateo_ultra_core.py"] = self._read_file("backend/core/mateo_ultra_core.py")
+            code_map["backend/core/mateo_ultra_core.py"] = self._read_file("backend/core/mateo_ultra_core.py")
         if area in ["all", "learning_cycle"]:
-            code_map["learning_cycle.py"] = self._read_file("backend/core/learning_cycle.py")
+            code_map["backend/core/learning_cycle.py"] = self._read_file("backend/core/learning_cycle.py")
         if area in ["all", "tools"]:
-            code_map["web_learner.py"] = self._read_file("backend/tools/web_learner.py")
-            code_map["obsidian_writer.py"] = self._read_file("backend/tools/obsidian_writer.py")
+            code_map["backend/tools/web_learner.py"] = self._read_file("backend/tools/web_learner.py")
+            code_map["backend/tools/obsidian_writer.py"] = self._read_file("backend/tools/obsidian_writer.py")
         if area in ["all", "memory"]:
-            code_map["obsidian_memory.py"] = self._read_file("backend/tools/obsidian_memory.py")
+            code_map["backend/tools/obsidian_memory.py"] = self._read_file("backend/tools/obsidian_memory.py")
         return {k: v for k, v in code_map.items() if v}
 
     def _read_file(self, file_path: str) -> Optional[str]:
@@ -121,57 +124,69 @@ class SelfImprovementEngine:
             return None
 
     async def _propose_improvements(self, current_code: Dict[str, str], area: str) -> List[Dict[str, Any]]:
-        code_parts = []
+        improvements: List[Dict[str, Any]] = []
         for filename, content in current_code.items():
-            code_parts.append(f"### {filename}")
-            code_parts.append(content[:2000] + "...")
-            code_parts.append("")
-        code_summary = "\n".join(code_parts)
+            if not content:
+                continue
+            for chunk_number, code_chunk in enumerate(self._split_for_analysis(content), 1):
+                chunk_improvements = await self._propose_for_chunk(
+                    filename, code_chunk, area, chunk_number
+                )
+                improvements.extend(chunk_improvements)
+                if len(improvements) >= self.MAX_PROPOSALS:
+                    return improvements[:self.MAX_PROPOSALS]
+        return improvements
 
+    def _split_for_analysis(self, content: str) -> List[str]:
+        """Divide el archivo sin descartar texto cuando supera el contexto del LLM."""
+        chunks = []
+        start = 0
+        while start < len(content):
+            end = min(start + self.ANALYSIS_CHUNK_CHARS, len(content))
+            if end < len(content):
+                newline = content.rfind("\n", start, end)
+                if newline > start:
+                    end = newline + 1
+            chunks.append(content[start:end])
+            start = end
+        return chunks
+
+    async def _propose_for_chunk(
+        self, filename: str, code_chunk: str, area: str, chunk_number: int
+    ) -> List[Dict[str, Any]]:
         prompt_lines = [
-            "Eres Mateo, un ingeniero de software senior analizando tu propio codigo para mejorarlo.",
+            "Eres Mateo, un ingeniero de software senior analizando su propio codigo para mejorarlo.",
             "",
             f"AREA A ANALIZAR: {area}",
+            f"ARCHIVO: {filename} (bloque {chunk_number})",
             "",
-            "CODIGO ACTUAL:",
-            code_summary,
+            "CODIGO ACTUAL COMPLETO DE ESTE BLOQUE:",
+            code_chunk,
             "",
-            "TAREA: Propone hasta 3 mejoras concretas y seguras.",
+            "TAREA: Propone hasta 3 mejoras concretas y seguras para este bloque.",
             "Para cada mejora, devuelve un JSON con estos campos:",
-            "- archivo: Nombre del archivo a modificar (debe estar en la lista permitida)",
+            "- archivo: Nombre del archivo a modificar (debe ser el archivo analizado)",
             "- descripcion: Que vas a mejorar y por que",
             "- codigo_original: Fragmento exacto del codigo actual que vas a reemplazar",
             "- codigo_nuevo: El nuevo codigo mejorado",
             "",
-            f"Archivos permitidos: {', '.join(ALLOWED_FILES)}",
-            "",
-            "Devuelve SOLO un array JSON valido, sin texto adicional antes o despues (no uses markdown ```json).",
-            "Ejemplo de formato:",
-            '[{"archivo": "backend/tools/web_learner.py", "descripcion": "Mejorar X", "codigo_original": "def old...", "codigo_nuevo": "def new..."}]',
-            "",
-            "Si no hay mejoras obvias, devuelve exactamente: []"
+            f"Archivo permitido: {filename}",
+            "Devuelve SOLO un array JSON valido, sin markdown ni texto adicional.",
+            '[{"archivo": "archivo.py", "descripcion": "Mejorar X", "codigo_original": "def old...", "codigo_nuevo": "def new..."}]',
+            "Si no hay mejoras obvias, devuelve exactamente: []",
         ]
-        prompt = "\n".join(prompt_lines)
-
         try:
-            response = await self.language_model.generate(prompt)
-            
-            # CORRECCIÓN 3: Regex mejorado para capturar todo el array JSON correctamente
-            json_match = re.search(r'\[.*\]', response, re.DOTALL)
-            if json_match:
-                try:
-                    improvements = json.loads(json_match.group(0))
-                    if isinstance(improvements, list):
-                        return improvements
-                except json.JSONDecodeError:
-                    logger.warning("El JSON extraído de la respuesta del LLM no es válido.")
-            
-            if "[]" in response:
+            response = await self.language_model.generate("\n".join(prompt_lines))
+            json_match = re.search(r"\[.*\]", response, re.DOTALL)
+            if not json_match:
                 return []
-                
+            improvements = json.loads(json_match.group(0))
+            return improvements if isinstance(improvements, list) else []
+        except (json.JSONDecodeError, TypeError, AttributeError) as exc:
+            logger.warning("Respuesta de auto-mejora no valida para %s: %s", filename, exc)
             return []
-        except Exception as e:
-            logger.error(f"Error proponiendo mejoras: {str(e)}")
+        except Exception as exc:
+            logger.error("Error proponiendo mejoras para %s: %s", filename, exc)
             return []
 
     def _validate_only(self, improvement: Dict[str, Any]) -> Dict[str, Any]:

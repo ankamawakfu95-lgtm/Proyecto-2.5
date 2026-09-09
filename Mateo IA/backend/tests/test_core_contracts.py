@@ -6,6 +6,9 @@ from contextvars import ContextVar
 from core.mateo_ultra_core import MateoUltraCore
 from neural.conversation_memory import ConversationMemory
 from tools import voice
+from tools.web_learner import source_quality
+from core.self_improvement_engine import SelfImprovementEngine
+from core.learning_cycle import _has_valid_source_citations
 
 
 class CoreConversationIsolationTests(unittest.TestCase):
@@ -114,6 +117,108 @@ class VoiceConfigurationTests(unittest.TestCase):
         with patch.dict("os.environ", {"MATEO_WHISPER_DEVICE": "cuda", "MATEO_WHISPER_COMPUTE_TYPE": "float16"}):
             self.assertEqual(voice._whisper_runtime_options(), {"device": "cuda", "compute_type": "float16"})
 
+
+class SelfImprovementAnalysisTests(unittest.TestCase):
+    def test_analysis_reads_code_after_old_truncation_limit(self):
+        class RecordingModel:
+            def __init__(self):
+                self.prompts = []
+
+            async def generate(self, prompt):
+                self.prompts.append(prompt)
+                return "[]"
+
+        model = RecordingModel()
+        engine = SelfImprovementEngine(model)
+        code = "inicio\n" + ("x = 1\n" * 500) + "MARCADOR_FINAL\n"
+
+        result = asyncio.run(engine._propose_improvements({"archivo.py": code}, "tools"))
+
+        self.assertEqual(result, [])
+        self.assertTrue(model.prompts)
+        self.assertTrue(any("MARCADOR_FINAL" in prompt for prompt in model.prompts))
+
+    def test_analysis_preserves_and_scans_large_files_in_chunks(self):
+        class RecordingModel:
+            def __init__(self):
+                self.prompts = []
+
+            async def generate(self, prompt):
+                self.prompts.append(prompt)
+                return "[]"
+
+        model = RecordingModel()
+        engine = SelfImprovementEngine(model)
+        code = "A" * (engine.ANALYSIS_CHUNK_CHARS + 100) + "MARCADOR_FINAL"
+
+        asyncio.run(engine._propose_improvements({"archivo.py": code}, "all"))
+
+        self.assertEqual(len(model.prompts), 2)
+        self.assertTrue(any("MARCADOR_FINAL" in prompt for prompt in model.prompts))
+
+
+class LearningQualityTests(unittest.TestCase):
+    def test_source_quality_prioritizes_institutional_domains(self):
+        self.assertGreater(source_quality("https://www.who.int/health"), source_quality("https://example.com/article"))
+        self.assertEqual(source_quality("https://docs.python.org/3/"), 1.0)
+
+    def test_citations_must_reference_existing_sources(self):
+        self.assertTrue(_has_valid_source_citations("Hecho [Fuente 1].", 2))
+        self.assertFalse(_has_valid_source_citations("Hecho [Fuente 3].", 2))
+        self.assertFalse(_has_valid_source_citations("Hecho sin referencia.", 2))
+
+    def test_learning_cycle_sends_full_source_content_and_urls(self):
+        from unittest.mock import patch
+        import core.learning_cycle as learning_cycle
+
+        marker = "MARCADOR_DE_EVIDENCIA_" + ("x" * 1200)
+        saved = {}
+
+        class Memory:
+            def search_memory(self, topic, k=2):
+                return ["Conocimiento previo suficiente sobre el tema."]
+
+        class Model:
+            async def generate(self, prompt, **kwargs):
+                self.prompt = prompt
+                return "## Resumen\n" + ("Contenido respaldado. " * 15) + "[Fuente 1]"
+
+        model = Model()
+        results = [{
+            "title": "Fuente institucional",
+            "url": "https://docs.python.org/3/",
+            "content": marker,
+            "source_quality": 1.0,
+        }]
+
+        def fake_save(topic, content, sources, **kwargs):
+            saved["sources"] = sources
+            saved["content"] = content
+            return "nota.md"
+
+        with patch.object(learning_cycle, "obsidian_memory", Memory()), \
+                patch.object(learning_cycle, "search_internet", return_value=results), \
+                patch.object(learning_cycle, "save_knowledge_to_obsidian", side_effect=fake_save):
+            response = asyncio.run(learning_cycle.execute_learning_cycle("Python", model))
+
+        self.assertIn("He aprendido", response)
+        self.assertIn(marker, model.prompt)
+        self.assertIn("https://docs.python.org/3/", saved["sources"][0])
+
+    def test_learning_cycle_rejects_uncited_synthesis(self):
+        from unittest.mock import patch
+        import core.learning_cycle as learning_cycle
+
+        class Model:
+            async def generate(self, prompt, **kwargs):
+                return "## Resumen\n" + ("Texto sin respaldo. " * 20)
+
+        results = [{"title": "Fuente", "url": "https://example.org", "content": "Evidencia real."}]
+        with patch.object(learning_cycle, "obsidian_memory", None), \
+                patch.object(learning_cycle, "search_internet", return_value=results):
+            response = asyncio.run(learning_cycle.execute_learning_cycle("Tema", Model()))
+
+        self.assertIn("no fue fiable", response)
 
 if __name__ == "__main__":
     unittest.main()

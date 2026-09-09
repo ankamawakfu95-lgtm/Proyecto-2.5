@@ -14,6 +14,9 @@ from typing import List, Dict, Any, Optional
 
 logger = logging.getLogger("AutoResearchEngine")
 
+MAX_RESEARCH_RESULTS = 6
+MAX_RESEARCH_CONTENT = 6000
+
 class AutoResearchEngine:
     # CORRECCIÓN 1: Constructor correcto
     def __init__(self, language_model, obsidian_memory_module, web_learner_module, obsidian_writer_module):
@@ -68,12 +71,12 @@ class AutoResearchEngine:
         for topic_info in known_topics:
             topic_name = topic_info["title"]
             topic_content = topic_info["content"]
-            
+
             # CORRECCIÓN 2: Evitar repetir temas
             if topic_name in self.researched_topics:
                 logger.info(f"Tema '{topic_name}' ya investigado. Saltando.")
                 continue
-                
+
             logger.info(f"Investigando tema: {topic_name}")
             try:
                 # 2. Identificar brechas de conocimiento
@@ -90,10 +93,10 @@ class AutoResearchEngine:
                     topic_name, topic_content, new_data, queries
                 )
                 results.append(synthesis_result)
-                
+
                 # Marcar como investigado
                 self._save_researched_topic(topic_name)
-                
+
             except Exception as e:
                 logger.error(f"Error investigando '{topic_name}': {e}")
                 results.append({"topic": topic_name, "status": "error", "error": str(e)})
@@ -118,7 +121,7 @@ class AutoResearchEngine:
                 "economia", "psicologia", "filosofia", "historia",
                 "arte", "musica", "literatura", "deportes"
             ]
-            
+
             all_docs = []
             for query in search_queries:
                 try:
@@ -130,7 +133,7 @@ class AutoResearchEngine:
                             title = first_line.replace("#", "").strip()[:80]
                             if not title:
                                 title = query
-                            
+
                             # CORRECCIÓN 4: Filtrar temas ya investigados
                             if title not in self.researched_topics:
                                 all_docs.append({"title": title, "content": doc})
@@ -203,11 +206,31 @@ class AutoResearchEngine:
                 logger.info(f"Buscando en la web: {query}")
                 if self.web_learner and hasattr(self.web_learner, 'search_internet'):
                     # CORRECCIÓN 5: Usar search_internet (la función correcta de tu web_learner)
-                    result = await asyncio.to_thread(self.web_learner.search_internet, query)
-                    collected.append({"query": query, "data": str(result)[:1500]})
+                    results = await asyncio.to_thread(
+                        self.web_learner.search_internet,
+                        query,
+                        num_results=MAX_RESEARCH_RESULTS,
+                    )
+                    for result in results[:MAX_RESEARCH_RESULTS]:
+                        collected.append({
+                            "query": query,
+                            "title": result.get("title", "Sin título"),
+                            "url": result.get("url", ""),
+                            "data": result.get("content", "")[:MAX_RESEARCH_CONTENT],
+                            "source_quality": result.get("source_quality", 0),
+                        })
                 elif self.web_learner and hasattr(self.web_learner, 'search_and_extract'):
-                    result = await self.web_learner.search_and_extract(query)
-                    collected.append({"query": query, "data": str(result)[:1500]})
+                    results = await self.web_learner.search_and_extract(
+                        query, num_results=MAX_RESEARCH_RESULTS
+                    )
+                    for result in results[:MAX_RESEARCH_RESULTS]:
+                        collected.append({
+                            "query": query,
+                            "title": result.get("title", "Sin título"),
+                            "url": result.get("url", ""),
+                            "data": result.get("content", "")[:MAX_RESEARCH_CONTENT],
+                            "source_quality": result.get("source_quality", 0),
+                        })
                 else:
                     logger.warning("web_learner no tiene metodo de busqueda compatible.")
                     collected.append({"query": query, "data": "No disponible"})
@@ -220,8 +243,14 @@ class AutoResearchEngine:
                                       new_data: List, queries: List) -> Dict[str, Any]:
         """Fusiona lo viejo con lo nuevo y guarda en Obsidian."""
         new_data_text = "\n\n".join([
-            f"Busqueda: {d['query']}\nResultado: {d['data'][:800]}"
-            for d in new_data
+            (
+                f"[Fuente {index}]\n"
+                f"Título: {data.get('title', 'Sin título')}\n"
+                f"URL: {data.get('url', '')}\n"
+                f"Consulta: {data.get('query', '')}\n"
+                f"Contenido:\n{data.get('data', '')[:MAX_RESEARCH_CONTENT]}"
+            )
+            for index, data in enumerate(new_data, 1)
         ])
 
         prompt_lines = [
@@ -230,32 +259,46 @@ class AutoResearchEngine:
             f"TEMA: {topic_name}",
             "",
             "CONOCIMIENTO PREVIO:",
-            original_content[:1000],
+            original_content[:4000],
             "",
             "NUEVA INFORMACION INVESTIGADA:",
             new_data_text,
             "",
-            "TAREA: Escribe una nota completa y bien estructurada en Markdown",
-            "que fusione el conocimiento previo con la nueva informacion.",
-            "Elimina redundancias, corrige datos desactualizados.",
-            "No incluyas texto de relleno, solo el contenido de la nota.",
-            "Usa encabezados ## y listas con - para organizar."
+            "TAREA: Escribe una nota completa, profunda y bien estructurada en Markdown.",
+            "Usa únicamente afirmaciones respaldadas por las fuentes recibidas.",
+            "Cita cada afirmación importante con [Fuente N].",
+            "Separa hechos, interpretaciones y controversias.",
+            "Si no hay evidencia suficiente, dilo claramente y no inventes.",
+            "Usa los encabezados ## Resumen, ## Desarrollo, ## Evidencia y límites y ## Conclusión.",
+            "Elimina redundancias y conserva una redacción seria, clara y original."
         ]
         prompt = "\n".join(prompt_lines)
 
         try:
-            synthesized = await self.language_model.generate(prompt, max_tokens=1500)
+            synthesized = await self.language_model.generate(prompt, max_tokens=2500, temperature=0.35)
             synthesized_text = str(synthesized).strip()
             if hasattr(synthesized, 'content'):
                 synthesized_text = synthesized.content.strip()
             elif isinstance(synthesized, dict) and 'text' in synthesized:
                 synthesized_text = synthesized['text'].strip()
 
+            citation_numbers = {
+                int(number) for number in re.findall(r"\[Fuente\s+(\d+)\]", synthesized_text, re.IGNORECASE)
+            }
+            if len(synthesized_text) < 200 or not citation_numbers or not all(
+                1 <= number <= len(new_data) for number in citation_numbers
+            ):
+                raise ValueError("La síntesis no contiene citas válidas a las fuentes recibidas.")
+
             # Guardar en Obsidian
             if self.obsidian_writer and hasattr(self.obsidian_writer, 'save_knowledge_to_obsidian'):
                 # CORRECCIÓN 6: Nombres de archivos legibles
                 topic_id = topic_name
-                sources = [f"Auto-Research: {q}" for q in queries]
+                sources = [
+                    f"[Fuente {index}] {data.get('title', 'Sin título')} - {data.get('url', '')}"
+                    for index, data in enumerate(new_data, 1)
+                    if data.get("url")
+                ]
 
                 try:
                     self.obsidian_writer.save_knowledge_to_obsidian(
