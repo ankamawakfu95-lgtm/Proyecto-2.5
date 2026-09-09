@@ -676,7 +676,11 @@ class MateoUltraCore:
         # 🚀 Auto-mejora: SOLO por comando explícito, nunca por lenguaje natural suelto.
         # Esto evita que una frase casual como "che, mejorate un poco" dispare
         # una reescritura de código sin que el usuario lo haya pedido a propósito.
-        if msg_lower.startswith("/automejora"):
+        if (
+            msg_lower.startswith("/automejora")
+            or re.search(r"\bconfirmar\s+`?si_\d+_[0-9]+`?", msg_lower)
+            or re.search(r"\b(aplica|aplicar|acepta|aceptar)\b.*\bautomejora", msg_lower)
+        ):
             return "self_improve"
         
         # 🩺 Patrones para consultas clínicas (Modo Médico)
@@ -832,21 +836,29 @@ class MateoUltraCore:
 
                 msg_lower = message.lower().strip()
 
-                # Paso 2: "/automejora confirmar <id>" -> aplica UNA propuesta puntual.
-                confirm_match = re.match(r"/automejora\s+confirmar\s+(\S+)", msg_lower)
-                if confirm_match:
-                    proposal_id = confirm_match.group(1)
-                    result = await self.self_improvement_engine.confirm_and_apply(proposal_id)
-                    if result.get("success"):
-                        steps_text = ", ".join(f"{s[0]}: {s[1]}" for s in result.get("validation_steps", []))
-                        return {"tool": "self_improve", "result": (
-                            f"✅ Mejora aplicada en `{result['file']}`.\n"
-                            f"**Descripción**: {result['description']}\n"
-                            f"**Validaciones**: {steps_text}\n"
-                            f"**Backup**: `{result.get('backup_path', 'N/A')}`\n\n"
-                            f"⚠️ Reiniciá el proceso de Mateo para que el cambio tenga efecto."
-                        )}
-                    return {"tool": "self_improve", "result": f"⚠️ No se aplicó: {result.get('message') or '; '.join(f'{s[0]}: {s[1]}' for s in result.get('validation_steps', []))}"}
+                # Paso 2: acepta `/automejora confirmar`, `confirmar` y backticks.
+                proposal_ids = re.findall(r"\bsi_\d+_[0-9]+\b", msg_lower)
+                if proposal_ids:
+                    results = []
+                    for proposal_id in dict.fromkeys(proposal_ids):
+                        results.append((proposal_id, await self.self_improvement_engine.confirm_and_apply(proposal_id)))
+                    lines = []
+                    for proposal_id, result in results:
+                        if result.get("success"):
+                            steps_text = ", ".join(f"{s[0]}: {s[1]}" for s in result.get("validation_steps", []))
+                            lines.append(
+                                f"✅ `{proposal_id}` aplicada en `{result['file']}`.\n"
+                                f"**Descripción**: {result['description']}\n"
+                                f"**Validaciones**: {steps_text}\n"
+                                f"**Backup**: `{result.get('backup_path', 'N/A')}`"
+                            )
+                        else:
+                            lines.append(f"⚠️ `{proposal_id}` no se aplicó: {result.get('message') or '; '.join(f'{s[0]}: {s[1]}' for s in result.get('validation_steps', []))}")
+                    lines.append("\n⚠️ Reiniciá el proceso de Mateo para que los cambios tengan efecto.")
+                    return {"tool": "self_improve", "result": "\n\n".join(lines)}
+
+                if re.search(r"\b(aplica|aplicar|acepta|aceptar)\b.*\bautomejora", msg_lower):
+                    return {"tool": "self_improve", "result": "⚠️ Necesito los identificadores exactos. Usá `confirmar si_1_123456` o varios IDs separados por espacios."}
 
                 # Paso 1: "/automejora [area]" -> solo propone, no toca ningún archivo.
                 area_match = re.search(r"\b(prompts|tools|classification|memory|learning_cycle|all)\b", msg_lower)

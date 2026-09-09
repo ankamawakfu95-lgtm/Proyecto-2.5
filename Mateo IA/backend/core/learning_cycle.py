@@ -22,6 +22,28 @@ def _has_valid_source_citations(text: str, source_count: int) -> bool:
     citations = {int(number) for number in re.findall(r"\[Fuente\s+(\d+)\]", text, re.IGNORECASE)}
     return bool(citations) and all(1 <= number <= source_count for number in citations)
 
+
+def _remove_model_references(text: str) -> str:
+    """Quita bibliografías redactadas por el modelo para reemplazarlas por las reales."""
+    match = re.search(r"\n#{1,3}\s*(?:referencias|fuentes|bibliograf[ií]a)\b", text, re.IGNORECASE)
+    return text[:match.start()].rstrip() if match else text.strip()
+
+
+def _append_source_catalog(text: str, results) -> str:
+    lines = [text.rstrip(), "", "## Fuentes consultadas"]
+    for index, result in enumerate(results, 1):
+        title = result.get("title", "Sin título").strip() or "Sin título"
+        url = result.get("url", "").strip()
+        lines.append(f"- [Fuente {index}] {title}: {url}")
+    return "\n".join(lines)
+
+
+def _has_topic_terminology_drift(topic: str, text: str) -> bool:
+    """Detecta una deformación conocida del concepto solicitado antes de guardar."""
+    normalized_topic = topic.casefold()
+    normalized_text = text.casefold()
+    return "explicable" in normalized_topic and "inteligencia artificial explotable" in normalized_text
+
 async def execute_learning_cycle(topic: str, language_model):
     """Orquesta la búsqueda, comprensión y guardado de nuevo conocimiento
     (Tavily si hay TAVILY_API_KEY configurada, si no DuckDuckGo automáticamente)."""
@@ -69,6 +91,9 @@ Nueva información de internet (ya limpia y extraída):
 TAREA: Redacta una nota profunda, clara y original sobre "{topic}".
 Usa únicamente afirmaciones respaldadas por la evidencia recibida.
 Después de cada afirmación importante coloca una cita como [Fuente 1].
+Usa exactamente los títulos y URLs proporcionados; no inventes autores, estudios,
+instituciones, fechas ni referencias. No redactes una sección de referencias:
+el sistema la añadirá automáticamente con las fuentes reales.
 Separa explícitamente hechos, interpretaciones y posibles controversias.
 Si las fuentes no permiten confirmar algo, dilo claramente y no lo inventes.
 Organiza la nota con: ## Resumen, ## Desarrollo, ## Evidencia y límites,
@@ -84,9 +109,11 @@ No menciones que eres una IA ni que estás resumiendo."""
         else:
             synthesized_text = "El modelo de lenguaje no está disponible."
 
-        synthesized_text = _model_text(synthesized_text)
+        synthesized_text = _remove_model_references(_model_text(synthesized_text))
         if len(synthesized_text) < 200:
             raise ValueError("Respuesta del LLM vacía o demasiado corta.")
+        if _has_topic_terminology_drift(topic, synthesized_text):
+            raise ValueError("La síntesis alteró la terminología central del tema.")
         if not _has_valid_source_citations(synthesized_text, min(len(web_results), MAX_SEARCH_RESULTS)):
             raise ValueError("La síntesis no contiene citas válidas a las fuentes recibidas.")
 
@@ -99,6 +126,10 @@ No menciones que eres una IA ni que estás resumiendo."""
         f"[Fuente {index}] {result.get('title', 'Sin título')} - {result.get('url', '')}"
         for index, result in enumerate(web_results[:MAX_SEARCH_RESULTS], 1)
     ]
+    synthesized_text = _append_source_catalog(
+        synthesized_text,
+        web_results[:MAX_SEARCH_RESULTS],
+    )
     save_result = save_knowledge_to_obsidian(
         topic,
         str(synthesized_text).strip(),

@@ -8,7 +8,7 @@ from neural.conversation_memory import ConversationMemory
 from tools import voice
 from tools.web_learner import source_quality
 from core.self_improvement_engine import SelfImprovementEngine
-from core.learning_cycle import _has_valid_source_citations
+from core.learning_cycle import _append_source_catalog, _has_topic_terminology_drift, _has_valid_source_citations, _remove_model_references
 
 
 class CoreConversationIsolationTests(unittest.TestCase):
@@ -65,6 +65,14 @@ class QueryClassificationTests(unittest.TestCase):
     def test_self_referential_question_is_not_wikipedia(self):
         core = object.__new__(MateoUltraCore)
         self.assertNotEqual(core._classify_query("¿Qué es lo que más te gusta?"), "wikipedia")
+
+    def test_self_improvement_confirmations_are_explicit_commands(self):
+        core = object.__new__(MateoUltraCore)
+        core._pending_self_feature = ContextVar("test_pending_self_feature_commands", default=None)
+
+        self.assertEqual(core._classify_query("/automejora"), "self_improve")
+        self.assertEqual(core._classify_query("confirmar `si_4_150359`"), "self_improve")
+        self.assertEqual(core._classify_query("aplica las automejoras"), "self_improve")
 
 
 class ConversationMemoryTests(unittest.TestCase):
@@ -158,6 +166,24 @@ class SelfImprovementAnalysisTests(unittest.TestCase):
 
 
 class LearningQualityTests(unittest.TestCase):
+    def test_model_references_are_replaced_by_real_source_catalog(self):
+        draft = "## Desarrollo\nDato [Fuente 1].\n\n## Referencias\nFuente inventada"
+        clean = _remove_model_references(draft)
+        catalog = _append_source_catalog(clean, [{"title": "Fuente oficial", "url": "https://example.org/oficial"}])
+
+        self.assertNotIn("Fuente inventada", catalog)
+        self.assertIn("https://example.org/oficial", catalog)
+
+    def test_learning_rejects_known_terminology_drift(self):
+        self.assertTrue(_has_topic_terminology_drift(
+            "inteligencia artificial explicable",
+            "La inteligencia artificial explotable es...",
+        ))
+        self.assertFalse(_has_topic_terminology_drift(
+            "inteligencia artificial explicable",
+            "La inteligencia artificial explicable es...",
+        ))
+
     def test_source_quality_prioritizes_institutional_domains(self):
         self.assertGreater(source_quality("https://www.who.int/health"), source_quality("https://example.com/article"))
         self.assertEqual(source_quality("https://docs.python.org/3/"), 1.0)
