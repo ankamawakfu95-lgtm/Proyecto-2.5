@@ -43,6 +43,22 @@ if exist "venv" (
 echo.
 :: Activar entorno virtual
 call venv\Scripts\activate.bat
+:: Crear archivo .env antes de cualquier descarga para no perder la configuracion
+if not exist ".env" (
+    echo Creando archivo de configuracion...
+    (
+        echo # Configuracion local de Mateo AI Ultra
+        echo WOLFRAM_ALPHA_APP_ID=
+        echo NEWSAPI_KEY=
+        echo OPENWEATHER_KEY=
+        echo MATEO_WHISPER_DEVICE=cpu
+        echo MATEO_WHISPER_COMPUTE_TYPE=int8
+    ) > .env
+    echo Archivo .env creado
+) else (
+    echo Archivo .env ya existe
+)
+echo.
 :: Actualizar pip
 echo â¬†ï¸  Actualizando pip...
 python -m pip install --upgrade pip -q
