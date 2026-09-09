@@ -75,6 +75,8 @@ Configurá en `.env`:
 
 ```env
 MATEO_WHISPER_MODEL=base
+MATEO_WHISPER_DEVICE=cpu
+MATEO_WHISPER_COMPUTE_TYPE=int8
 MATEO_PIPER_VOICE_MODEL=C:\ruta\a\tu\voz\es_ES-modelo.onnx
 ```
 
@@ -82,6 +84,7 @@ MATEO_PIPER_VOICE_MODEL=C:\ruta\a\tu\voz\es_ES-modelo.onnx
 - Si usás el instalador, no necesitas descargar manualmente el modelo ni editar `MATEO_PIPER_VOICE_MODEL`.
 - También puedes descargar otra voz desde https://github.com/rhasspy/piper/blob/master/VOICES.md y cambiar `MATEO_PIPER_VOICE_MODEL` en `.env`.
 - faster-whisper descarga su modelo automáticamente la primera vez que se usa
+- Por defecto la transcripción usa CPU (`int8`), para no requerir CUDA ni sus DLL. Solo configura `MATEO_WHISPER_DEVICE=cuda` si tu equipo tiene CUDA instalada.
 
 Podés comprobar si están disponibles con `GET /voice-status`. En la UI, el botón 🎤 graba y transcribe tu mensaje, y el botón 🔊 junto a cada respuesta de Mateo la lee en voz alta.
 

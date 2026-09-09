@@ -7,6 +7,9 @@
 #
 # faster-whisper descarga su modelo automáticamente la primera vez
 #    (configurable con MATEO_WHISPER_MODEL, por defecto "base").
+# En equipos normales se usa CPU/int8 por defecto. CUDA es opcional:
+# MATEO_WHISPER_DEVICE=cuda
+# MATEO_WHISPER_COMPUTE_TYPE=float16
 
 faster-whisper
 piper-tts

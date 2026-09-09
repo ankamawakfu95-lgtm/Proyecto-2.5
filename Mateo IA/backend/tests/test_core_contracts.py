@@ -5,6 +5,7 @@ from contextvars import ContextVar
 
 from core.mateo_ultra_core import MateoUltraCore
 from neural.conversation_memory import ConversationMemory
+from tools import voice
 
 
 class CoreConversationIsolationTests(unittest.TestCase):
@@ -97,6 +98,21 @@ class ConversationMemoryTests(unittest.TestCase):
 
             second = ConversationMemory({"conversation_memory_path": str(path)})
             self.assertEqual(len(second.search("leonardo", "¿Qué estoy estudiando?")), 1)
+
+
+class VoiceConfigurationTests(unittest.TestCase):
+    def test_whisper_defaults_to_cpu_without_cuda(self):
+        from unittest.mock import patch
+
+        with patch.dict("os.environ", {}, clear=False):
+            with patch.dict("os.environ", {"MATEO_WHISPER_DEVICE": "", "MATEO_WHISPER_COMPUTE_TYPE": ""}):
+                self.assertEqual(voice._whisper_runtime_options(), {"device": "cpu", "compute_type": "int8"})
+
+    def test_whisper_cuda_can_be_enabled_explicitly(self):
+        from unittest.mock import patch
+
+        with patch.dict("os.environ", {"MATEO_WHISPER_DEVICE": "cuda", "MATEO_WHISPER_COMPUTE_TYPE": "float16"}):
+            self.assertEqual(voice._whisper_runtime_options(), {"device": "cuda", "compute_type": "float16"})
 
 
 if __name__ == "__main__":

@@ -25,6 +25,14 @@ class VoiceError(Exception):
 # ==========================================
 # SPEECH-TO-TEXT (faster-whisper)
 # ==========================================
+def _whisper_runtime_options() -> Dict[str, str]:
+    """Devuelve una configuración portable para CPU o CUDA."""
+    device = os.getenv("MATEO_WHISPER_DEVICE", "cpu").strip().lower() or "cpu"
+    default_compute_type = "int8" if device == "cpu" else "float16"
+    compute_type = os.getenv("MATEO_WHISPER_COMPUTE_TYPE", default_compute_type).strip()
+    return {"device": device, "compute_type": compute_type or default_compute_type}
+
+
 def _get_whisper_model():
     global _whisper_model
     if _whisper_model is None:
@@ -35,15 +43,22 @@ def _get_whisper_model():
                 "Falta 'faster-whisper'. Instalá con: pip install -r requirements-voice.txt"
             ) from e
         model_size = os.getenv("MATEO_WHISPER_MODEL", "base")
-        # compute_type "int8" corre bien en CPU sin GPU dedicada
-        _whisper_model = WhisperModel(model_size, device="auto", compute_type="int8")
+        options = _whisper_runtime_options()
+        _whisper_model = WhisperModel(model_size, **options)
     return _whisper_model
 
 
 def transcribe_audio(path: str | Path) -> Dict[str, Any]:
     """Transcribe un archivo de audio (wav/mp3/webm/ogg) a texto."""
-    model = _get_whisper_model()
-    segments, info = model.transcribe(str(path), language=os.getenv("MATEO_WHISPER_LANG") or None)
+    try:
+        model = _get_whisper_model()
+        segments, info = model.transcribe(str(path), language=os.getenv("MATEO_WHISPER_LANG") or None)
+    except (RuntimeError, OSError) as e:
+        raise VoiceError(
+            "No se pudo iniciar la transcripción. Se intentó usar el dispositivo "
+            "configurado para faster-whisper. Para equipos sin CUDA, configura "
+            "MATEO_WHISPER_DEVICE=cpu en .env y reinicia Mateo."
+        ) from e
     text = " ".join(segment.text.strip() for segment in segments).strip()
     if not text:
         return {"text": "", "language": getattr(info, "language", None)}
